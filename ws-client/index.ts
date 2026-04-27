@@ -1,7 +1,7 @@
 import qs from 'querystring';
 import WebSocket from 'ws';
 import { EventDispatcher } from '@node-sdk/dispatcher/event';
-import { assert, formatDomain, buildUserAgent } from '@node-sdk/utils';
+import { assert, formatDomain, buildUserAgent, resolveProxy, createConnectAgent } from '@node-sdk/utils';
 import { defaultLogger } from '@node-sdk/logger/default-logger';
 import { LoggerProxy } from '@node-sdk/logger/logger-proxy';
 import { Domain, Logger, LoggerLevel } from '@node-sdk/typings';
@@ -204,7 +204,15 @@ export class WSClient {
     let wsInstance;
 
     try {
-      const { agent } = this;
+      // If the user explicitly passed an agent, use it. Otherwise resolve
+      // proxy from the standard Linux env vars (HTTP_PROXY / HTTPS_PROXY /
+      // NO_PROXY) and build a CONNECT-tunnel agent when appropriate.
+      const agent =
+        this.agent ??
+        (() => {
+          const proxyConfig = resolveProxy(connectUrl);
+          return proxyConfig ? createConnectAgent(proxyConfig, connectUrl) : undefined;
+        })();
       wsInstance = new WebSocket(connectUrl, { agent });
     } catch(e) {
       this.logger.error('[ws]', 'new WebSocket error');

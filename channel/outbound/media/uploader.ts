@@ -1,14 +1,12 @@
 import fs from 'fs';
-import http from 'http';
-import https from 'https';
 import path from 'path';
-import type { LookupFunction } from 'net';
 import type { Client } from '@node-sdk/client/client';
 import { LarkChannelError } from '../../types';
 import type { OutboundConfig } from '../../types';
 import { parseOpusDuration } from './duration-ogg';
 import { parseMp4Duration } from './duration-mp4';
 import { assertPublicUrl, SsrfGuardOptions } from './ssrf-guard';
+import { createProxiedPinnedAgent, makeDirectPinnedAgent } from '@node-sdk/utils/proxy';
 
 /**
  * POSIX directory prefixes that can never be a legitimate media source.
@@ -119,11 +117,12 @@ export class MediaUploader {
         const ssrf = this.config?.ssrfGuard;
         const guardEnabled = ssrf !== false;
         let resolvedIp: string | undefined;
+        let originalHost: string | undefined;
         if (guardEnabled) {
             const ssrfOpts: SsrfGuardOptions =
                 typeof ssrf === 'object' && ssrf ? { allowlist: ssrf.allowlist } : {};
             try {
-                ({ resolvedIp } = await assertPublicUrl(source, ssrfOpts));
+                ({ resolvedIp, originalHost } = await assertPublicUrl(source, ssrfOpts));
             } catch (e) {
                 throw new LarkChannelError('ssrf_blocked', `URL blocked: ${String(e)}`, {
                     cause: e,
@@ -146,7 +145,11 @@ export class MediaUploader {
                 maxBodyLength: URL_MAX_BYTES,
             };
             if (resolvedIp) {
-                const agent = makePinnedAgent(source, resolvedIp);
+                const agent = createProxiedPinnedAgent(
+                    source,
+                    resolvedIp,
+                    originalHost || new URL(source).hostname
+                );
                 requestOpts.httpAgent = agent;
                 requestOpts.httpsAgent = agent;
             }
@@ -244,32 +247,4 @@ export class MediaUploader {
             });
         }
     }
-}
-
-/**
- * Build a per-request http(s) Agent whose DNS lookup always returns
- * `pinnedIp`, regardless of what hostname Node would otherwise resolve.
- * The URL's original hostname is preserved on the wire, which keeps TLS
- * SNI and certificate verification working. This closes the window where
- * a malicious DNS server could return a different (private) IP on the
- * second resolution triggered by the actual fetch.
- */
-function makePinnedAgent(url: string, pinnedIp: string): http.Agent | https.Agent {
-    const AgentClass = url.startsWith('https:') ? https.Agent : http.Agent;
-    const agent = new AgentClass();
-
-    const family = pinnedIp.includes(':') ? 6 : 4;
-    const lookup: LookupFunction = (_hostname, _opts, cb) => {
-        cb(null, pinnedIp, family);
-    };
-
-    // Node's Agent doesn't accept `lookup` in its constructor options, so we
-    // wrap `createConnection` to fold `lookup` into every outgoing socket.
-    const origCreateConnection = agent.createConnection.bind(agent);
-    (agent as unknown as {
-        createConnection: (opts: unknown, cb: unknown) => unknown;
-    }).createConnection = (opts, cb) =>
-        origCreateConnection({ ...(opts as object), lookup }, cb as never);
-
-    return agent;
 }

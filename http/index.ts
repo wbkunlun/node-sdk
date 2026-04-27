@@ -1,5 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import { buildUserAgent } from '@node-sdk/utils/user-agent';
+import { resolveProxy, toAxiosProxy } from '@node-sdk/utils/proxy';
 
 const defaultHttpInstance: AxiosInstance = axios.create();
 
@@ -13,6 +14,18 @@ defaultHttpInstance.interceptors.request.use(
         if (req.headers && !req.headers['User-Agent']) {
             req.headers['User-Agent'] = FALLBACK_UA;
         }
+
+        // Resolve proxy from Linux env vars (HTTP_PROXY / HTTPS_PROXY /
+        // NO_PROXY) per-request, so different target hosts get the correct
+        // proxy (or none when NO_PROXY matches). Skip when the caller has
+        // already set an explicit proxy or httpAgent/httpsAgent.
+        if (!req.proxy && !req.httpAgent && !req.httpsAgent && req.url) {
+            const proxyConfig = resolveProxy(req.url);
+            if (proxyConfig) {
+                req.proxy = toAxiosProxy(proxyConfig);
+            }
+        }
+
         return req;
     },
     undefined,

@@ -1,6 +1,8 @@
 import axios, { AxiosInstance } from 'axios';
+import { getProxyForUrl } from 'proxy-from-env';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import { HttpProxyAgent } from 'http-proxy-agent';
 import { buildUserAgent } from '@node-sdk/utils/user-agent';
-import { createConnectAgent, resolveProxy } from '@node-sdk/utils/proxy';
 
 const defaultHttpInstance: AxiosInstance = axios.create();
 
@@ -17,19 +19,22 @@ defaultHttpInstance.interceptors.request.use(
 
         // Resolve proxy from Linux env vars (HTTP_PROXY / HTTPS_PROXY /
         // NO_PROXY) per-request, so different target hosts get the correct
-        // proxy (or none when NO_PROXY matches). Skip when the caller has
-        // already set an explicit proxy or httpAgent/httpsAgent.
+        // proxy (or none when NO_PROXY matches). Uses CONNECT-tunneling
+        // agents (same pattern as aibot-node-sdk) — never absolute-URI
+        // proxying which causes Squid to return 501 for HTTPS targets.
         if (!req.proxy && !req.httpAgent && !req.httpsAgent && req.url) {
-            const proxyConfig = resolveProxy(req.url);
-            if (proxyConfig) {
-                // HTTPS targets MUST use CONNECT tunneling through the proxy.
-                // Setting req.proxy (absolute-URI form) causes Squid and many
-                // other proxies to return 501 ERR_UNSUP_REQ for HTTPS URLs.
-                const isHttps = req.url.startsWith('https:');
-                if (isHttps) {
-                    req.httpsAgent = createConnectAgent(proxyConfig, req.url);
-                } else {
-                    req.httpAgent = createConnectAgent(proxyConfig, req.url);
+            const proxyUrl = getProxyForUrl(req.url);
+            if (proxyUrl) {
+                try {
+                    if (req.url.startsWith('https:')) {
+                        req.httpsAgent = new HttpsProxyAgent(proxyUrl);
+                        req.proxy = false;
+                    } else if (req.url.startsWith('http:')) {
+                        req.httpAgent = new HttpProxyAgent(proxyUrl);
+                        req.proxy = false;
+                    }
+                } catch (_) {
+                    // ignore proxy URL parse errors, fall through to direct
                 }
             }
         }

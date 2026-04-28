@@ -1,7 +1,9 @@
 import qs from 'querystring';
 import WebSocket from 'ws';
+import { getProxyForUrl } from 'proxy-from-env';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { EventDispatcher } from '@node-sdk/dispatcher/event';
-import { assert, formatDomain, buildUserAgent, resolveProxy, createConnectAgent } from '@node-sdk/utils';
+import { assert, formatDomain, buildUserAgent } from '@node-sdk/utils';
 import { defaultLogger } from '@node-sdk/logger/default-logger';
 import { LoggerProxy } from '@node-sdk/logger/logger-proxy';
 import { Domain, Logger, LoggerLevel } from '@node-sdk/typings';
@@ -207,11 +209,15 @@ export class WSClient {
       // If the user explicitly passed an agent, use it. Otherwise resolve
       // proxy from the standard Linux env vars (HTTP_PROXY / HTTPS_PROXY /
       // NO_PROXY) and build a CONNECT-tunnel agent when appropriate.
+      // `proxy-from-env` only matches http(s) URLs, so map wss/ws → https/http.
       const agent =
         this.agent ??
         (() => {
-          const proxyConfig = resolveProxy(connectUrl);
-          return proxyConfig ? createConnectAgent(proxyConfig, connectUrl) : undefined;
+          const proxyLookupUrl = connectUrl
+            .replace(/^wss:/i, 'https:')
+            .replace(/^ws:/i, 'http:');
+          const proxyUrl = getProxyForUrl(proxyLookupUrl);
+          return proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
         })();
       wsInstance = new WebSocket(connectUrl, { agent });
     } catch(e) {

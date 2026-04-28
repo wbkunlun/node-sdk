@@ -30,6 +30,11 @@ function readEnv(name: string): string | undefined {
 }
 
 // ─── proxy URL parsing ────────────────────────────────────────────────
+//
+// NOTE: resolveProxy / getProxyEnvConfig are only kept for
+// createProxiedPinnedAgent (SSRF-protected media upload). For general
+// HTTP/WS proxy, prefer getProxyForUrl + HttpsProxyAgent/HttpProxyAgent
+// (consistent with aibot-node-sdk). See http/index.ts and ws-client/index.ts.
 
 function parseProxyUrl(raw: string): ProxyConfig | null {
   // Add a scheme if missing — `proxy.example.com:8080` is common
@@ -159,33 +164,8 @@ export function resolveProxy(targetUrl: string): ProxyConfig | null {
   return httpProxy ?? null;
 }
 
-/**
- * Build an axios-compatible proxy config object from `ProxyConfig`.
- * Axios 1.x handles both HTTP and HTTPS targets with this single config.
- */
-export function toAxiosProxy(config: ProxyConfig): {
-  protocol: string;
-  host: string;
-  port: number;
-  auth?: { username: string; password: string };
-} {
-  return {
-    protocol: config.protocol,
-    host: config.host,
-    port: config.port,
-    ...(config.auth ? { auth: config.auth } : {}),
-  };
-}
+// ─── CONNECT tunnel helper (used by createProxiedPinnedAgent) ─────────
 
-// ─── WebSocket proxy agent (HTTP CONNECT tunnel) ──────────────────────
-
-/**
- * Build an `http.Agent` that tunnels through `proxy` via HTTP CONNECT.
- * Use for WebSocket connections (the `ws` library accepts an `agent` option).
- *
- * For `wss://` targets the returned socket is upgraded to TLS after the
- * CONNECT handshake, so the WebSocket runs over a secure channel.
- */
 /**
  * Execute an HTTP CONNECT handshake through `proxySocket` to reach
  * `connectHost:connectPort`. Returns a Promise that resolves when the
@@ -239,40 +219,6 @@ function connectThrough(
     };
     proxySocket.on('data', onData);
   });
-}
-
-export function createConnectAgent(proxy: ProxyConfig, targetUrl: string): http.Agent {
-  const target = new URL(targetUrl);
-  const isSecure = target.protocol === 'wss:' || target.protocol === 'https:';
-  const targetPort = Number(target.port) || (isSecure ? 443 : 80);
-
-  const agent = new http.Agent({ keepAlive: true });
-
-  agent.createConnection = (_opts, cb) => {
-    const proxySocket = net.connect(proxy.port, proxy.host);
-    proxySocket.once('error', (err) => { proxySocket.destroy(); cb(err); });
-
-    proxySocket.once('connect', () => {
-      connectThrough(proxySocket, target.hostname, targetPort, proxy.auth)
-        .then(() => {
-          if (isSecure) {
-            const tlsSocket = tls.connect({
-              socket: proxySocket,
-              servername: target.hostname,
-            });
-            tlsSocket.once('error', (err) => { tlsSocket.destroy(); cb(err); });
-            cb(null, tlsSocket);
-          } else {
-            cb(null, proxySocket);
-          }
-        })
-        .catch((err) => cb(err));
-    });
-
-    return proxySocket;
-  };
-
-  return agent;
 }
 
 /**

@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import { buildUserAgent } from '@node-sdk/utils/user-agent';
-import { resolveProxy, toAxiosProxy } from '@node-sdk/utils/proxy';
+import { createConnectAgent, resolveProxy } from '@node-sdk/utils/proxy';
 
 const defaultHttpInstance: AxiosInstance = axios.create();
 
@@ -22,7 +22,15 @@ defaultHttpInstance.interceptors.request.use(
         if (!req.proxy && !req.httpAgent && !req.httpsAgent && req.url) {
             const proxyConfig = resolveProxy(req.url);
             if (proxyConfig) {
-                req.proxy = toAxiosProxy(proxyConfig);
+                // HTTPS targets MUST use CONNECT tunneling through the proxy.
+                // Setting req.proxy (absolute-URI form) causes Squid and many
+                // other proxies to return 501 ERR_UNSUP_REQ for HTTPS URLs.
+                const isHttps = req.url.startsWith('https:');
+                if (isHttps) {
+                    req.httpsAgent = createConnectAgent(proxyConfig, req.url);
+                } else {
+                    req.httpAgent = createConnectAgent(proxyConfig, req.url);
+                }
             }
         }
 

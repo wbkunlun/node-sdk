@@ -241,11 +241,12 @@ export function createProxiedPinnedAgent(
   const targetPort = Number(target.port) || (isSecure ? 443 : 80);
 
   const AgentClass = isSecure ? https.Agent : http.Agent;
-  const agent = new AgentClass({ keepAlive: true });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const agent: any = new AgentClass({ keepAlive: true });
 
-  agent.createConnection = (_opts, cb) => {
+  agent.createConnection = (_opts: any, cb: any) => {
     const proxySocket = net.connect(proxyConfig.port, proxyConfig.host);
-    proxySocket.once('error', (err) => { proxySocket.destroy(); cb(err); });
+    proxySocket.once('error', (err: Error) => { proxySocket.destroy(); cb(err); });
 
     proxySocket.once('connect', () => {
       connectThrough(proxySocket, pinnedIp, targetPort, proxyConfig.auth)
@@ -255,13 +256,13 @@ export function createProxiedPinnedAgent(
               socket: proxySocket,
               servername: originalHost,
             });
-            tlsSocket.once('error', (err) => { tlsSocket.destroy(); cb(err); });
+            tlsSocket.once('error', (err: Error) => { tlsSocket.destroy(); cb(err); });
             cb(null, tlsSocket);
           } else {
             cb(null, proxySocket);
           }
         })
-        .catch((err) => cb(err));
+        .catch((err: Error) => cb(err));
     });
 
     return proxySocket;
@@ -276,14 +277,13 @@ export function createProxiedPinnedAgent(
  */
 export function makeDirectPinnedAgent(targetUrl: string, pinnedIp: string): http.Agent | https.Agent {
   const AgentClass = targetUrl.startsWith('https:') ? https.Agent : http.Agent;
-  const agent = new AgentClass();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const agent: any = new AgentClass();
   const family: 4 | 6 = pinnedIp.includes(':') ? 6 : 4;
 
   const origCreateConnection = agent.createConnection.bind(agent);
-  (agent as unknown as {
-    createConnection: (opts: unknown, cb: unknown) => unknown;
-  }).createConnection = (opts, cb) =>
-    origCreateConnection({ ...(opts as object), lookup: (_h: string, _o: unknown, c: (err: Error | null, addr: string, fam: number) => void) => c(null, pinnedIp, family) }, cb as never);
+  agent.createConnection = (opts: any, cb: any) =>
+    origCreateConnection({ ...opts, lookup: (_h: string, _o: any, c: any) => c(null, pinnedIp, family) }, cb);
 
   return agent;
 }
